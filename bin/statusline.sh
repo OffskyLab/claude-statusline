@@ -125,7 +125,7 @@ else
 fi
 
 effort="default"
-settings_path="$HOME/.claude/settings.json"
+settings_path="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 if [ -f "$settings_path" ]; then
     effort=$(jq -r '.effortLevel // "default"' "$settings_path" 2>/dev/null)
 fi
@@ -226,24 +226,42 @@ if ! $has_stdin_rates; then
     fi
 
     if $needs_refresh; then
+        # Determine keychain service name
+        _keychain_name="Claude Code-credentials"
+        if command -v orrery >/dev/null 2>&1; then
+            _orrery_ver=$(orrery --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [ -n "$_orrery_ver" ]; then
+                IFS='.' read -r _ov1 _ov2 _ov3 <<< "$_orrery_ver"
+                _meets_min=false
+                if [ "${_ov1:-0}" -gt 2 ]; then _meets_min=true
+                elif [ "${_ov1:-0}" -eq 2 ] && [ "${_ov2:-0}" -gt 3 ]; then _meets_min=true
+                elif [ "${_ov1:-0}" -eq 2 ] && [ "${_ov2:-0}" -eq 3 ] && [ "${_ov3:-0}" -ge 1 ]; then _meets_min=true
+                fi
+                if $_meets_min; then
+                    _kn=$(orrery auth store --claude 2>/dev/null)
+                    [ -n "$_kn" ] && _keychain_name="$_kn"
+                fi
+            fi
+        fi
+
         token=""
         if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
             token="$CLAUDE_CODE_OAUTH_TOKEN"
         elif command -v security >/dev/null 2>&1; then
-            blob=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+            blob=$(security find-generic-password -s "$_keychain_name" -w 2>/dev/null)
             if [ -n "$blob" ]; then
                 token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
             fi
         fi
         if [ -z "$token" ] || [ "$token" = "null" ]; then
-            creds_file="${HOME}/.claude/.credentials.json"
+            creds_file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
             if [ -f "$creds_file" ]; then
                 token=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds_file" 2>/dev/null)
             fi
         fi
         if [ -z "$token" ] || [ "$token" = "null" ]; then
             if command -v secret-tool >/dev/null 2>&1; then
-                blob=$(timeout 2 secret-tool lookup service "Claude Code-credentials" 2>/dev/null)
+                blob=$(timeout 2 secret-tool lookup service "$_keychain_name" 2>/dev/null)
                 if [ -n "$blob" ]; then
                     token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
                 fi
